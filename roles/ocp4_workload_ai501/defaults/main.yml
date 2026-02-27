@@ -1,0 +1,13 @@
+---
+# Number of learner users to provision
+ocp4_workload_ai501_num_users: "{{ num_users | default(5) }}"
+
+# Deploy-lab git repository and version to clone
+ocp4_workload_ai501_deploy_lab_repo: https://github.com/rhoai-genaiops/deploy-lab.git
+ocp4_workload_ai501_deploy_lab_repo_version: main
+
+# Helm install/upgrade timeout (applied to all chart installs)
+ocp4_workload_ai501_helm_timeout: 20m
+
+# Lab instructions URL reported to users at provision end
+ocp4_workload_ai501_lab_instructions_url: https://rhoai-genaiops.github.io/lab-instructions/

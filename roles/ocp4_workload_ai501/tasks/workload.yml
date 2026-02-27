@@ -1,0 +1,292 @@
+---
+# =============================================================================
+# Setup - formerly pre_workload.yml
+# =============================================================================
+
+- name: Ensure working directory exists
+  ansible.builtin.file:
+    path: "/tmp/{{ guid }}"
+    state: directory
+    mode: "0755"
+
+- name: Install helm if not present
+  ansible.builtin.include_tasks: install_helm.yml
+
+- name: Get the OpenShift console route to discover apps domain
+  kubernetes.core.k8s_info:
+    api_version: route.openshift.io/v1
+    kind: Route
+    namespace: openshift-console
+    field_selectors:
+      - spec.to.name=console
+  register: r_console_route
+  until:
+    - r_console_route is defined
+    - r_console_route.resources is defined
+    - r_console_route.resources | list | length > 0
+  retries: 60
+  delay: 15
+
+- name: Set apps domain fact from console route hostname
+  ansible.builtin.set_fact:
+    ocp4_workload_ai501_apps_domain: "{{ r_console_route.resources[0].spec.host |
+      regex_search('(?<=\\.).*') }}"
+
+# =============================================================================
+# Workload deployment
+# =============================================================================
+
+- name: Clone deploy-lab git repository
+  ansible.builtin.command:
+    cmd: "git clone {{ ocp4_workload_ai501_deploy_lab_repo }}"
+    chdir: "/tmp/{{ guid }}/"
+    creates: "/tmp/{{ guid }}/deploy-lab"
+
+- name: Install ai501-base Helm chart (operators)
+  ansible.builtin.command:
+    cmd: "{{ item }}"
+    chdir: "/tmp/{{ guid }}/deploy-lab/operators"
+  loop:
+    - "helm dep up"
+    - "helm upgrade --install ai501-base . --namespace ai501 --create-namespace --timeout={{ ocp4_workload_ai501_helm_timeout }}"
+  register: r_ai501_base
+  until: r_ai501_base.rc == 0
+  retries: 3
+  delay: 10
+
+- name: Wait before checking Operator status
+  ansible.builtin.pause:
+    seconds: 60
+
+- name: Wait for all CSVs in operator namespaces to reach Succeeded
+  kubernetes.core.k8s_info:
+    api_version: operators.coreos.com/v1alpha1
+    kind: ClusterServiceVersion
+    namespace: "{{ item }}"
+  register: r_namespace_csvs
+  loop:
+    - openshift-operators
+    - redhat-ods-operator
+    - openshift-operators-redhat
+  retries: 30
+  delay: 10
+  until: >
+    (r_namespace_csvs.resources | default([]) | length > 0) and
+    (r_namespace_csvs.resources | default([]) |
+     rejectattr('status', 'defined') | list | length == 0) and
+    (r_namespace_csvs.resources | default([]) |
+     rejectattr('status.phase', 'defined') | list | length == 0) and
+    (r_namespace_csvs.resources | default([]) |
+     selectattr('status.phase', 'defined') |
+     rejectattr('status.phase', 'equalto', 'Succeeded') | list | length == 0)
+
+- name: Install ai501-toolings Helm chart
+  ansible.builtin.command:
+    cmd: "{{ item }}"
+    chdir: "/tmp/{{ guid }}/deploy-lab/toolings"
+  loop:
+    - "helm dep up"
+    - "helm upgrade --install ai501-toolings . --namespace ai501 --timeout={{ ocp4_workload_ai501_helm_timeout }}"
+  register: r_ai501_toolings
+  until: r_ai501_toolings.rc == 0
+  ignore_errors: true
+  retries: 5
+  delay: 10
+
+- name: Patch DSCInitialization for tracing and monitoring configuration
+  kubernetes.core.k8s:
+    state: present
+    merge_type: merge
+    definition:
+      apiVersion: dscinitialization.opendatahub.io/v1
+      kind: DSCInitialization
+      metadata:
+        name: default-dsci
+      spec:
+        applicationsNamespace: redhat-ods-applications
+        monitoring:
+          alerting: {}
+          managementState: Managed
+          metrics:
+            replicas: 1
+            storage:
+              retention: 90d
+              size: 5Gi
+          namespace: redhat-ods-monitoring
+          traces:
+            # 100% sampling for dev/test — lower to 0.1 for production
+            sampleRatio: '1.0'
+            storage:
+              backend: pv
+              retention: 2160h0m0s
+              size: 10Gi
+        trustedCABundle:
+          customCABundle: ''
+          managementState: Managed
+
+- name: Wait for DataScienceCluster to become Ready
+  kubernetes.core.k8s_info:
+    api_version: datasciencecluster.opendatahub.io/v1
+    kind: DataScienceCluster
+  register: r_dsc
+  until: >
+    r_dsc.resources | length > 0 and
+    (
+      r_dsc.resources[0].status.conditions | selectattr('type', 'equalto', 'Ready')
+                                           | selectattr('status', 'equalto', 'True')
+                                           | list
+    ) | length > 0
+  retries: 10
+  delay: 30
+
+- name: Apply ConfigMap for user workload monitoring
+  kubernetes.core.k8s:
+    state: present
+    definition:
+      apiVersion: v1
+      kind: ConfigMap
+      metadata:
+        name: user-workload-monitoring-config
+        namespace: openshift-user-workload-monitoring
+      data:
+        config.yaml: |
+          prometheus:
+            logLevel: debug
+            retention: 15d
+          alertmanager:
+            enabled: true
+            enableAlertmanagerConfig: true
+
+- name: Install ai501-student-content Helm chart
+  ansible.builtin.command:
+    cmd: >
+      helm upgrade --install ai501-student-content .
+      --namespace ai501 --create-namespace
+      --timeout={{ ocp4_workload_ai501_helm_timeout }}
+      --set cluster_domain={{ ocp4_workload_ai501_apps_domain }}
+      --set attendees={{ ocp4_workload_ai501_num_users }}
+    chdir: "/tmp/{{ guid }}/deploy-lab/student-content"
+  register: r_ai501_student_content
+  until: r_ai501_student_content.rc == 0
+  retries: 3
+  delay: 10
+
+- name: Patch cluster OAuth to add HTPasswd identity provider for students
+  kubernetes.core.k8s_json_patch:
+    api_version: config.openshift.io/v1
+    kind: OAuth
+    name: cluster
+    patch:
+      - op: add
+        path: /spec/identityProviders/-
+        value:
+          name: Students
+          type: HTPasswd
+          mappingMethod: claim
+          htpasswd:
+            fileData:
+              name: htpasswd-ai501
+
+- name: Enable default route for OpenShift image registry
+  kubernetes.core.k8s_json_patch:
+    api_version: imageregistry.operator.openshift.io/v1
+    kind: Config
+    name: cluster
+    patch:
+      - op: add
+        path: /spec/defaultRoute
+        value: true
+
+- name: Disable Tekton affinity assistant
+  block:
+    - name: Patch TektonConfig to disable affinity assistant
+      kubernetes.core.k8s:
+        state: present
+        merge_type: merge
+        definition:
+          apiVersion: operator.tekton.dev/v1alpha1
+          kind: TektonConfig
+          metadata:
+            name: config
+          spec:
+            pipeline:
+              disable-affinity-assistant: true
+              coschedule: "disabled"
+
+    - name: Patch feature-flags ConfigMap to disable affinity assistant
+      kubernetes.core.k8s:
+        state: present
+        merge_type: merge
+        definition:
+          apiVersion: v1
+          kind: ConfigMap
+          metadata:
+            name: feature-flags
+            namespace: openshift-pipelines
+          data:
+            disable-affinity-assistant: "true"
+            coschedule: "disabled"
+
+    - name: Patch config-defaults ConfigMap to clear pod templates
+      kubernetes.core.k8s:
+        state: present
+        merge_type: merge
+        definition:
+          apiVersion: v1
+          kind: ConfigMap
+          metadata:
+            name: config-defaults
+            namespace: openshift-pipelines
+          data:
+            default-affinity-assistant-pod-template: ""
+            default-pod-template: ""
+
+    - name: Delete Tekton pipelines controller pods to apply changes
+      kubernetes.core.k8s:
+        state: absent
+        api_version: v1
+        kind: Pod
+        namespace: openshift-pipelines
+        label_selectors:
+          - app=tekton-pipelines-controller
+
+- name: Configure ArgoCD cluster namespace access for learner toolings
+  block:
+    - name: Build user tooling namespace list
+      ansible.builtin.set_fact:
+        ocp4_workload_ai501_namespace_list: >-
+          {{ range(1, ocp4_workload_ai501_num_users | int + 1)
+             | map('regex_replace', '^(.*)$', 'user\1-toolings')
+             | join(',') }}
+
+    - name: Patch OpenShift GitOps Operator subscription with namespace list
+      kubernetes.core.k8s_json_patch:
+        api_version: operators.coreos.com/v1alpha1
+        kind: Subscription
+        name: openshift-gitops-operator
+        namespace: openshift-gitops-operator
+        patch:
+          - op: add
+            path: /spec/config/env/1
+            value:
+              name: ARGOCD_CLUSTER_CONFIG_NAMESPACES
+              value: "{{ ocp4_workload_ai501_namespace_list }}"
+
+# =============================================================================
+# Report provision data - formerly post_workload.yml
+# =============================================================================
+
+- name: Report user info
+  agnosticd.core.agnosticd_user_info:
+    msg:
+      - ""
+      - "AI501 GenAIOps Enablement environment is ready!"
+      - ""
+      - "Lab Instructions: {{ ocp4_workload_ai501_lab_instructions_url }}"
+      - ""
+      - "Learner users have been provisioned."
+      - "They are named user1 to user{{ ocp4_workload_ai501_num_users }}"
+      - ""
+      - "Users provisioned: {{ ocp4_workload_ai501_num_users }}"
+      - "User password: thisisthepassword"
+      - ""

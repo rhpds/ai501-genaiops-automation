@@ -1,0 +1,19 @@
+= ocp4_workload_ai501 - Deploy AI501 GenAIOps Enablement
+
+Installs AI501 GenAIOps Enablement course content into an OpenShift cluster.
+
+See `defaults/main.yml` for all variables and their descriptions.
+
+== What this role does
+
+. Installs the `ai501-base` Helm chart (RHOAI and supporting operators)
+. Waits for all operator CSVs to reach `Succeeded`
+. Installs the `ai501-toolings` Helm chart
+. Configures `DSCInitialization` (tracing, monitoring retention)
+. Waits for `DataScienceCluster` to become `Ready`
+. Configures user workload monitoring
+. Installs the `ai501-student-content` Helm chart for each learner
+. Adds an HTPasswd identity provider (`Students`) to the cluster OAuth
+. Enables the OpenShift image registry default route
+. Disables the Tekton affinity assistant
+. Configures ArgoCD cluster namespaces for each learner's toolings namespace

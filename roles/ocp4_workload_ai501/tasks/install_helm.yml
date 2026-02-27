@@ -1,0 +1,11 @@
+---
+- name: Check if helm is installed
+  ansible.builtin.shell: /usr/bin/which helm >/dev/null 2>&1
+  register: r_helm_exists
+  ignore_errors: true
+  changed_when: false
+
+- name: Install helm via get-helm-3 script
+  ansible.builtin.shell: >
+    curl https://raw.githubusercontent.com/helm/helm/master/scripts/get-helm-3 | bash
+  when: r_helm_exists.rc != 0

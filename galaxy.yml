@@ -1,0 +1,25 @@
+---
+namespace: workshop
+name: aai501
+version: 1.0.0
+readme: README.md
+authors:
+  - Cansu Kavili Oernek <ckavili@redhat.com>
+
+description: Ansible collection for the AI501 GenAIOps Enablement workshop on OpenShift
+
+license:
+  - GPL-2.0-or-later
+
+tags:
+  - openshift
+  - ai
+  - genaiops
+  - workshop
+
+dependencies: {}
+
+build_ignore:
+  - .git
+  - .gitignore
+  - .DS_Store

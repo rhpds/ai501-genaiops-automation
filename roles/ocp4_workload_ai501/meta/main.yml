@@ -1,0 +1,16 @@
+---
+galaxy_info:
+  role_name: ocp4_workload_ai501
+  author: Red Hat, Cansu Kavili Oernek (ckavili@redhat.com)
+  description: Deploy AI501 GenAIOps Enablement course content into OpenShift.
+  license: GPL-2.0-or-later
+  min_ansible_version: "2.9"
+  platforms: []
+  galaxy_tags:
+    - ocp
+    - openshift
+    - ai
+    - genaiops
+    - workshop
+
+dependencies: []
