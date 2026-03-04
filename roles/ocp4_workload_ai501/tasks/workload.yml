@@ -275,3 +275,10 @@
       - "Users provisioned: {{ ocp4_workload_ai501_num_users }}"
       - "User password: {{ ocp4_workload_ai501_user_password }}"
       - ""
+
+- name: Report user data
+  agnosticd.core.agnosticd_user_data:
+    data:
+      user_name: user1 - {{ ocp4_workload_ai501_num_users }}
+      user_password: "{{ ocp4_workload_ai501_user_password }}"
+      lab_guide: "{{ ocp4_workload_ai501_lab_instructions_url }}"
