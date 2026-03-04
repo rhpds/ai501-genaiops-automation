@@ -2,6 +2,9 @@
 # Number of learner users to provision
 ocp4_workload_ai501_num_users: "{{ num_users | default(5) }}"
 
+# Dynamically generated common password for learners
+ocp4_workload_ai501_user_password: "{{ common_password | default('thisisthepassword')  }}"
+
 # Deploy-lab git repository and version to clone
 ocp4_workload_ai501_deploy_lab_repo: https://github.com/rhoai-genaiops/deploy-lab.git
 ocp4_workload_ai501_deploy_lab_repo_version: main

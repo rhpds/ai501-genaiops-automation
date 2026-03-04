@@ -165,27 +165,12 @@
       --timeout={{ ocp4_workload_ai501_helm_timeout }}
       --set cluster_domain={{ ocp4_workload_ai501_apps_domain }}
       --set attendees={{ ocp4_workload_ai501_num_users }}
+      --set common_password={{ ocp4_workload_ai501_user_password }}
     chdir: "/tmp/{{ guid }}/deploy-lab/student-content"
   register: r_ai501_student_content
   until: r_ai501_student_content.rc == 0
   retries: 3
   delay: 10
-
-- name: Patch cluster OAuth to add HTPasswd identity provider for students
-  kubernetes.core.k8s_json_patch:
-    api_version: config.openshift.io/v1
-    kind: OAuth
-    name: cluster
-    patch:
-      - op: add
-        path: /spec/identityProviders/-
-        value:
-          name: Students
-          type: HTPasswd
-          mappingMethod: claim
-          htpasswd:
-            fileData:
-              name: htpasswd-ai501
 
 - name: Enable default route for OpenShift image registry
   kubernetes.core.k8s_json_patch:
@@ -288,5 +273,5 @@
       - "They are named user1 to user{{ ocp4_workload_ai501_num_users }}"
       - ""
       - "Users provisioned: {{ ocp4_workload_ai501_num_users }}"
-      - "User password: thisisthepassword"
+      - "User password: {{ ocp4_workload_ai501_user_password }}"
       - ""
